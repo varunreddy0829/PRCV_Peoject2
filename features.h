@@ -15,29 +15,52 @@ int extractBaselineFeatures(cv::Mat &src, std::vector<float> &featureVector);
 
 // TASK 2: 3D RGB Histogram Extraction
 // Input: cv::Mat src (The image to process)
-// Output: std::vector<float> &featureVector (The flattened, normalized 512-bin histogram)
+// Output: std::vector<float> &featureVector (The flattened, normalized 512-bin
+// histogram)
 int extractHistogramFeatures(cv::Mat &src, std::vector<float> &featureVector);
 
-/* TASK 3: Multi-Histogram Extraction 
+/* TASK 3: Multi-Histogram Extraction
    Input: Image
    Output: Vector of 1536 floats (Top, Bottom, and Mid histograms concatenated)
 */
-int extractMultiHistogramFeatures(cv::Mat &src, std::vector<float> &featureVector);
+int extractMultiHistogramFeatures(cv::Mat &src,
+                                  std::vector<float> &featureVector);
 
-/* TASK 4: Color + Texture Matching 
+/* TASK 4: Color + Texture Matching
    Input: Image
    Output: Vector of 512 (Color) + 32 (Texture) = 544 floats
 */
-int extractColorTextureFeatures(cv::Mat &src, std::vector<float> &featureVector);
+int extractColorTextureFeatures(cv::Mat &src,
+                                std::vector<float> &featureVector);
+
+/* TASK 7: Custom Feature (HSV + Spatial)
+   Input: Image
+   Output: Vector of 1536 floats (Top, Bottom, Center HSV histograms)
+*/
+int extractTask7Features(cv::Mat &src, std::vector<float> &featureVector);
+
+/* EXTENSION 1: Gabor Texture Features
+   Input: Image (converted to grayscale internally)
+   Output: Vector of 16 floats (Mean/StdDev for 8 filters: 4 orientations * 2
+   scales)
+*/
+int extractGaborFeatures(cv::Mat &src, std::vector<float> &featureVector);
 
 int sobelX3x3(cv::Mat &src, cv::Mat &dst);
 int sobelY3x3(cv::Mat &src, cv::Mat &dst);
 int magnitude(cv::Mat &sx, cv::Mat &sy, cv::Mat &dst);
 
-
 // DISTANCE METRIC: Histogram Intersection
 // Input: Two feature vectors (v1, v2)
 // Output: A float representing the similarity/distance
-float compareHistogramIntersection(const std::vector<float> &v1, const std::vector<float> &v2);
+float compareHistogramIntersection(const std::vector<float> &v1,
+                                   const std::vector<float> &v2);
 
+/**
+ * Cosine Distance
+ * Logic: 1.0 - (DotProduct(v1, v2) / (L2Norm(v1) * L2Norm(v2)))
+ */
+float calculateSSD(const std::vector<float> &v1, const std::vector<float> &v2);
+float calculateCosineDistance(const std::vector<float> &v1,
+                              const std::vector<float> &v2);
 #endif

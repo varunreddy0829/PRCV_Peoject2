@@ -1,113 +1,73 @@
 /*
 Name: Varun Reddy Patlolla
-*/
+Project: Computer Vision Image Retrieval (Tasks 1 - 5)
+Date: 02/09/2026
 
+DESCRIPTION:
+This library contains all image processing and feature extraction logic, 
+including custom Sobel filters, histogram binning, and distance metrics 
+(SSD, Intersection, and Cosine).
+*/
 
 #include <opencv2/opencv.hpp>
 #include <vector>
+#include <cmath>
+#include <iostream>
+#include <algorithm>
 #include "features.h"
 
-//Function prtotypes
-int sobelX3x3(cv::Mat &src, cv::Mat &dst);
-int sobelY3x3(cv::Mat &src, cv::Mat &dst);
-int magnitude(cv::Mat &sx, cv::Mat &sy, cv::Mat &dst);
+// =============================================================================
+// DISTANCE METRICS
+// =============================================================================
 
 /**
- * Baseline: Extracts a 7x7 square in the middle.
- * This is a spatial feature vector.
+ * calculateSSD
+ * Purpose: Sum of Squared Differences for Baseline matching.
  */
-int extractBaselineFeatures(cv::Mat &src, std::vector<float> &featureVector) {
-    if (src.cols < 7 || src.rows < 7) return -1;
-
-    int startX = (src.cols / 2) - 3;
-    int startY = (src.rows / 2) - 3;
-
-    for (int y = startY; y < startY + 7; y++) {
-        for (int x = startX; x < startX + 7; x++) {
-            cv::Vec3b pixel = src.at<cv::Vec3b>(y, x);
-            // Feature vector is built by flattening the 2D patch
-            featureVector.push_back((float)pixel[0]); // B
-            featureVector.push_back((float)pixel[1]); // G
-            featureVector.push_back((float)pixel[2]); // R
-        }
+float calculateSSD(const std::vector<float> &v1, const std::vector<float> &v2) {
+    float sum = 0.0;
+    for (size_t i = 0; i < v1.size(); i++) {
+        float diff = v1[i] - v2[i];
+        sum += diff * diff;
     }
-    return 0;
-}
-
-
-
-/**
- * Task 2: extractHistogramFeatures
- * Purpose: Creates a 3D RGB histogram of the entire image.
- * Logic: 
- * - Divides 0-255 range into 8 buckets (size 32 each).
- * - Iterates through every pixel and increments the corresponding bucket.
- * - Normalizes by total pixel count so images of different sizes can be compared.
- */
-int extractHistogramFeatures(cv::Mat &src, std::vector<float> &featureVector) {
-    const int BINS = 8; 
-    int dims[3] = {BINS, BINS, BINS};
-    
-    // Create a 3D matrix to act as our histogram (initialized to 0)
-    cv::Mat hist = cv::Mat::zeros(3, dims, CV_32F);
-
-    // Step 1: Count pixels into 3D bins
-    for (int i = 0; i < src.rows; i++) {
-        for (int j = 0; j < src.cols; j++) {
-            cv::Vec3b pixel = src.at<cv::Vec3b>(i, j);
-            
-            // Map 0-255 to 0-7 bin index using integer division
-            int b_bin = pixel[0] / 32;
-            int g_bin = pixel[1] / 32;
-            int r_bin = pixel[2] / 32;
-
-            hist.at<float>(r_bin, g_bin, b_bin)++;
-        }
-    }
-
-    // Step 2: Normalize and Flatten
-    // We flatten the 3D cube into a 1D vector so it can be saved in the CSV row.
-    float totalPixels = (float)src.rows * src.cols;
-    featureVector.clear();
-
-    for (int r = 0; r < BINS; r++) {
-        for (int g = 0; g < BINS; g++) {
-            for (int b = 0; b < BINS; b++) {
-                // Normalize by dividing by total pixel count
-                float val = hist.at<float>(r, g, b) / totalPixels;
-                featureVector.push_back(val);
-            }
-        }
-    }
-
-    return 0;
+    return sum;
 }
 
 /**
  * compareHistogramIntersection
- * Purpose: Computes the "overlap" between two histograms.
- * Logic: 
- * - Sum of the minimum values of corresponding bins.
- * - Intersection returns 1.0 for perfect match, 0.0 for no common colors.
- * - We return (1.0 - intersection) because our Matcher treats SMALL numbers as better matches.
+ * Purpose: Computes similarity based on overlap between two histograms.
+ * Returns: (1.0 - intersection) as a distance (0.0 is perfect match).
  */
 float compareHistogramIntersection(const std::vector<float> &v1, const std::vector<float> &v2) {
     float intersection = 0.0;
-    
     for (size_t i = 0; i < v1.size(); i++) {
-        // Add the smaller of the two values to the intersection sum
         intersection += std::min(v1[i], v2[i]);
     }
-
-    // Convert similarity (1 is best) to distance (0 is best)
     return 1.0f - intersection;
 }
 
 /**
- * getRegionHist (Helper)
+ * calculateCosineDistance
+ * Purpose: Measures angular distance for Deep Embeddings (Task 5).
+ */
+float calculateCosineDistance(const std::vector<float> &v1, const std::vector<float> &v2) {
+    float dotProduct = 0.0, normA = 0.0, normB = 0.0;
+    for (size_t i = 0; i < v1.size(); i++) {
+        dotProduct += v1[i] * v2[i];
+        normA += v1[i] * v1[i];
+        normB += v2[i] * v2[i];
+    }
+    if (normA == 0 || normB == 0) return 1.0f;
+    return 1.0f - (dotProduct / (std::sqrt(normA) * std::sqrt(normB)));
+}
+
+// =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+/**
+ * getRegionHist
  * Purpose: Extracts a normalized 8x8x8 RGB histogram from a specific sub-region.
- * Input: cv::Mat region
- * Output: std::vector<float> (512 bins)
  */
 std::vector<float> getRegionHist(cv::Mat &region) {
     const int BINS = 8;
@@ -117,7 +77,6 @@ std::vector<float> getRegionHist(cv::Mat &region) {
     for (int i = 0; i < region.rows; i++) {
         for (int j = 0; j < region.cols; j++) {
             cv::Vec3b pixel = region.at<cv::Vec3b>(i, j);
-            // Map BGR to 8 bins
             hist.at<float>(pixel[2]/32, pixel[1]/32, pixel[0]/32)++;
         }
     }
@@ -134,238 +93,332 @@ std::vector<float> getRegionHist(cv::Mat &region) {
     return out;
 }
 
+// =============================================================================
+// TASK EXTRACTION FUNCTIONS
+// =============================================================================
+
 /**
- * Task 3: extractMultiHistogramFeatures
- * Purpose: Creates 3 separate histograms for spatial regions and joins them.
- * Logic: 
- * - Top Half (Rows 0 to Height/2)
- * - Bottom Half (Rows Height/2 to Height)
- * - Center 100x100 patch
+ * Task 1: extractBaselineFeatures
+ * Extracts a 7x7 middle patch (147 values).
  */
-int extractMultiHistogramFeatures(cv::Mat &src, std::vector<float> &featureVector) {
-    featureVector.clear();
+int extractBaselineFeatures(cv::Mat &src, std::vector<float> &featureVector) {
+    if (src.cols < 7 || src.rows < 7) return -1;
+    int startX = (src.cols / 2) - 3;
+    int startY = (src.rows / 2) - 3;
 
-    // 1. Top Half ROI
-    cv::Rect topRect(0, 0, src.cols, src.rows / 2);
-    cv::Mat topRegion = src(topRect);
-    std::vector<float> topHist = getRegionHist(topRegion);
-
-    // 2. Bottom Half ROI
-    cv::Rect botRect(0, src.rows / 2, src.cols, src.rows / 2);
-    cv::Mat botRegion = src(botRect);
-    std::vector<float> botHist = getRegionHist(botRegion);
-
-    // 3. Middle 100x100 ROI (ensure we don't go out of bounds)
-    int startX = std::max(0, (src.cols / 2) - 50);
-    int startY = std::max(0, (src.rows / 2) - 50);
-    cv::Rect midRect(startX, startY, 100, 100);
-    cv::Mat midRegion = src(midRect);
-    std::vector<float> midHist = getRegionHist(midRegion);
-
-    // Concatenate into a single feature vector (1536 elements)
-    featureVector.insert(featureVector.end(), topHist.begin(), topHist.end());
-    featureVector.insert(featureVector.end(), botHist.begin(), botHist.end());
-    featureVector.insert(featureVector.end(), midHist.begin(), midHist.end());
-
+    for (int y = startY; y < startY + 7; y++) {
+        for (int x = startX; x < startX + 7; x++) {
+            cv::Vec3b pixel = src.at<cv::Vec3b>(y, x);
+            featureVector.push_back((float)pixel[0]); // B
+            featureVector.push_back((float)pixel[1]); // G
+            featureVector.push_back((float)pixel[2]); // R
+        }
+    }
     return 0;
 }
 
 /**
- * extractColorTextureFeatures
- * Logic: 
- * 1. Computes a 512-bin Color Histogram (same as Task 2).
- * 2. Computes Sobel Magnitude using your Project 1 code.
- * 3. Creates a 32-bin Histogram of those magnitudes.
+ * Task 2: extractHistogramFeatures
+ * Global 3D RGB histogram (512 bins).
+ */
+int extractHistogramFeatures(cv::Mat &src, std::vector<float> &featureVector) {
+    featureVector = getRegionHist(src);
+    return 0;
+}
+
+/**
+ * Task 3: extractMultiHistogramFeatures
+ * Spatial histograms: Top, Bottom, and 100x100 Mid (1536 bins total).
+ */
+int extractMultiHistogramFeatures(cv::Mat &src, std::vector<float> &featureVector) {
+    featureVector.clear();
+    // Top
+    cv::Rect topRect(0, 0, src.cols, src.rows / 2);
+    cv::Mat topRegion = src(topRect);
+    std::vector<float> topHist = getRegionHist(topRegion);
+    // Bottom
+    cv::Rect botRect(0, src.rows / 2, src.cols, src.rows / 2);
+    cv::Mat botRegion = src(botRect);
+    std::vector<float> botHist = getRegionHist(botRegion);
+    // Mid 100x100
+    int sX = std::max(0, (src.cols / 2) - 50);
+    int sY = std::max(0, (src.rows / 2) - 50);
+    cv::Rect midRect(sX, sY, std::min(100, src.cols), std::min(100, src.rows));
+    cv::Mat midRegion = src(midRect);
+    std::vector<float> midHist = getRegionHist(midRegion);
+
+    featureVector.insert(featureVector.end(), topHist.begin(), topHist.end());
+    featureVector.insert(featureVector.end(), botHist.begin(), botHist.end());
+    featureVector.insert(featureVector.end(), midHist.begin(), midHist.end());
+    return 0;
+}
+
+/**
+ * Task 4: extractColorTextureFeatures
+ * Global color (512) + Sobel Magnitude texture (32) = 544 bins.
  */
 int extractColorTextureFeatures(cv::Mat &src, std::vector<float> &featureVector) {
     featureVector.clear();
-
-    // --- PART 1: COLOR (512 Bins) ---
-    std::vector<float> colorHist;
-    extractHistogramFeatures(src, colorHist); // Reusing your Task 2 code
+    std::vector<float> colorHist = getRegionHist(src);
     featureVector.insert(featureVector.end(), colorHist.begin(), colorHist.end());
 
-    // --- PART 2: TEXTURE (32 Bins) ---
     cv::Mat sx, sy, mag;
     sobelX3x3(src, sx);
     sobelY3x3(src, sy);
     magnitude(sx, sy, mag);
 
-    // Convert 3-channel magnitude to 1-channel for texture analysis
     cv::Mat grayMag;
     cv::cvtColor(mag, grayMag, cv::COLOR_BGR2GRAY);
 
-    const int TEXTURE_BINS = 32;
-    std::vector<float> texHist(TEXTURE_BINS, 0.0f);
-
+    const int TEX_BINS = 32;
+    std::vector<float> texHist(TEX_BINS, 0.0f);
     for (int i = 0; i < grayMag.rows; i++) {
         for (int j = 0; j < grayMag.cols; j++) {
             uchar val = grayMag.at<uchar>(i, j);
-            // Map 0-255 to 0-31
-            int bin = val / (256 / TEXTURE_BINS);
-            if (bin >= TEXTURE_BINS) bin = TEXTURE_BINS - 1;
+            int bin = val / (256 / TEX_BINS);
+            if (bin >= TEX_BINS) bin = TEX_BINS - 1;
             texHist[bin]++;
         }
     }
-
-    // Normalize texture histogram
-    float totalPixels = (float)grayMag.rows * grayMag.cols;
-    for (int i = 0; i < TEXTURE_BINS; i++) {
-        featureVector.push_back(texHist[i] / totalPixels);
-    }
-
+    float total = (float)grayMag.rows * grayMag.cols;
+    for (int i = 0; i < TEX_BINS; i++) featureVector.push_back(texHist[i] / total);
     return 0;
 }
 
-/**
- * Sobel X filter: detects vertical edges (positive right)
- * Horizontal: [-1 0 1]
- * Vertical: [1 2 1]
- * Combined: [-1 0 1; -2 0 2; -1 0 1]
- */
+// =============================================================================
+// PROJECT 1 FILTERS (SOBEL & MAGNITUDE)
+// =============================================================================
+
 int sobelX3x3(cv::Mat &src, cv::Mat &dst) {
-  if (src.empty()) {
-    printf("Error: Source image is empty\n");
-    return -1;
-  }
+    if (src.empty()) return -1;
+    dst.create(src.size(), CV_16SC3);
+    cv::Mat temp(src.size(), CV_16SC3);
+    int h[3] = {-1, 0, 1}, v[3] = {1, 2, 1};
 
-  // Create destination as 16-bit signed short
-  dst.create(src.size(), CV_16SC3);
-  dst = cv::Scalar(0, 0, 0);
-
-  // Separable filters
-  int horizontal[3] = {-1, 0, 1};
-  int vertical[3] = {1, 2, 1};
-
-  // Temporary image for horizontal pass
-  cv::Mat temp(src.size(), CV_16SC3, cv::Scalar(0, 0, 0));
-
-  // Horizontal pass: [-1 0 1]
-  for (int i = 0; i < src.rows; i++) {
-    cv::Vec3b *srcRow = src.ptr<cv::Vec3b>(i);
-    cv::Vec3s *tempRow = temp.ptr<cv::Vec3s>(i);
-
-    for (int j = 1; j < src.cols - 1; j++) {
-      for (int c = 0; c < 3; c++) {
-        int sum = 0;
-        for (int k = -1; k <= 1; k++) {
-          sum += srcRow[j + k][c] * horizontal[k + 1];
+    for (int i = 0; i < src.rows; i++) {
+        for (int j = 1; j < src.cols - 1; j++) {
+            for (int c = 0; c < 3; c++) {
+                int sum = 0;
+                for (int k = -1; k <= 1; k++) sum += src.at<cv::Vec3b>(i, j+k)[c] * h[k+1];
+                temp.at<cv::Vec3s>(i, j)[c] = sum;
+            }
         }
-        tempRow[j][c] = sum;
-      }
     }
-  }
-
-  // Vertical pass: [1 2 1]
-  for (int i = 1; i < temp.rows - 1; i++) {
-    cv::Vec3s *dstRow = dst.ptr<cv::Vec3s>(i);
-
-    for (int j = 0; j < temp.cols; j++) {
-      for (int c = 0; c < 3; c++) {
-        int sum = 0;
-        for (int k = -1; k <= 1; k++) {
-          sum += temp.ptr<cv::Vec3s>(i + k)[j][c] * vertical[k + 1];
+    for (int i = 1; i < temp.rows - 1; i++) {
+        for (int j = 0; j < temp.cols; j++) {
+            for (int c = 0; c < 3; c++) {
+                int sum = 0;
+                for (int k = -1; k <= 1; k++) sum += temp.at<cv::Vec3s>(i+k, j)[c] * v[k+1];
+                dst.at<cv::Vec3s>(i, j)[c] = sum / 4;
+            }
         }
-        dstRow[j][c] = sum / 4; // Normalize by sum of vertical filter
-      }
     }
-  }
-
-  return 0;
+    return 0;
 }
 
-/**
- * Sobel Y filter: detects horizontal edges (positive up)
- * Horizontal: [1 2 1]
- * Vertical: [1 0 -1]
- * Combined: [1 2 1; 0 0 0; -1 -2 -1]
- */
 int sobelY3x3(cv::Mat &src, cv::Mat &dst) {
-  if (src.empty()) {
-    printf("Error: Source image is empty\n");
-    return -1;
-  }
+    if (src.empty()) return -1;
+    dst.create(src.size(), CV_16SC3);
+    cv::Mat temp(src.size(), CV_16SC3);
+    int h[3] = {1, 2, 1}, v[3] = {1, 0, -1};
 
-  // Create destination as 16-bit signed short
-  dst.create(src.size(), CV_16SC3);
-  dst = cv::Scalar(0, 0, 0);
-
-  // Separable filters
-  int horizontal[3] = {1, 2, 1};
-  int vertical[3] = {1, 0, -1};
-
-  // Temporary image for horizontal pass
-  cv::Mat temp(src.size(), CV_16SC3, cv::Scalar(0, 0, 0));
-
-  // Horizontal pass: [1 2 1]
-  for (int i = 0; i < src.rows; i++) {
-    cv::Vec3b *srcRow = src.ptr<cv::Vec3b>(i);
-    cv::Vec3s *tempRow = temp.ptr<cv::Vec3s>(i);
-
-    for (int j = 1; j < src.cols - 1; j++) {
-      for (int c = 0; c < 3; c++) {
-        int sum = 0;
-        for (int k = -1; k <= 1; k++) {
-          sum += srcRow[j + k][c] * horizontal[k + 1];
+    for (int i = 0; i < src.rows; i++) {
+        for (int j = 1; j < src.cols - 1; j++) {
+            for (int c = 0; c < 3; c++) {
+                int sum = 0;
+                for (int k = -1; k <= 1; k++) sum += src.at<cv::Vec3b>(i, j+k)[c] * h[k+1];
+                temp.at<cv::Vec3s>(i, j)[c] = sum;
+            }
         }
-        tempRow[j][c] = sum;
-      }
+    }
+    for (int i = 1; i < temp.rows - 1; i++) {
+        for (int j = 0; j < temp.cols; j++) {
+            for (int c = 0; c < 3; c++) {
+                int sum = 0;
+                for (int k = -1; k <= 1; k++) sum += temp.at<cv::Vec3s>(i+k, j)[c] * v[k+1];
+                dst.at<cv::Vec3s>(i, j)[c] = sum / 4;
+            }
+        }
+    }
+    return 0;
+}
+
+int magnitude(cv::Mat &sx, cv::Mat &sy, cv::Mat &dst) {
+    if (sx.empty() || sy.empty()) return -1;
+    dst.create(sx.size(), CV_8UC3);
+    for (int i = 0; i < sx.rows; i++) {
+        for (int j = 0; j < sx.cols; j++) {
+            for (int c = 0; c < 3; c++) {
+                float m = std::sqrt(sx.at<cv::Vec3s>(i, j)[c] * sx.at<cv::Vec3s>(i, j)[c] + 
+                                   sy.at<cv::Vec3s>(i, j)[c] * sy.at<cv::Vec3s>(i, j)[c]);
+                dst.at<cv::Vec3b>(i, j)[c] = cv::saturate_cast<uchar>(m);
+            }
+        }
+    }
+    return 0;
+}
+
+// =============================================================================
+// NEW: DISPLAY LOGIC
+// =============================================================================
+
+/**
+ * ImageMatch Struct
+ * Purpose: Pairs a filename with its distance for easy sorting and display.
+ */
+struct ImageMatch {
+    std::string filename;
+    float distance;
+};
+
+/**
+ * displayTopMatches
+ * Purpose: Iterates through results to print names and open OpenCV windows.
+ */
+void displayTopMatches(const std::vector<ImageMatch> &results, const std::string &imageDir) {
+    std::cout << "\nDisplaying Top Results..." << std::endl;
+    
+    for (size_t i = 0; i < results.size(); i++) {
+        // Build the full path if the directory is provided
+        std::string fullPath = imageDir + "/" + results[i].filename;
+        
+        cv::Mat img = cv::imread(fullPath);
+        if (img.empty()) {
+            // Try reading without prepending directory in case filename is a full path
+            img = cv::imread(results[i].filename);
+        }
+
+        if (!img.empty()) {
+            std::string winName = "Match " + std::to_string(i) + ": " + results[i].filename;
+            cv::imshow(winName, img);
+            std::cout << "Opened window for: " << results[i].filename << std::endl;
+        } else {
+            std::cout << "Warning: Could not find image file " << results[i].filename << std::endl;
+        }
+    }
+
+    std::cout << "Press any key on an image window to exit." << std::endl;
+    cv::waitKey(0);
+}
+// =============================================================================
+// HELPER: HSV HISTOGRAM
+// =============================================================================
+std::vector<float> getRegionHistHSV(cv::Mat &region) {
+  const int H_BINS = 8;
+  const int S_BINS = 8;
+  const int V_BINS = 8;
+  int dims[3] = {H_BINS, S_BINS, V_BINS};
+  cv::Mat hist = cv::Mat::zeros(3, dims, CV_32F);
+
+  cv::Mat hsv;
+  cv::cvtColor(region, hsv, cv::COLOR_BGR2HSV);
+
+  for (int i = 0; i < hsv.rows; i++) {
+    for (int j = 0; j < hsv.cols; j++) {
+      cv::Vec3b pixel = hsv.at<cv::Vec3b>(i, j);
+      // Hue is 0-179 in OpenCV, Sat/Val are 0-255
+      int h = pixel[0] * H_BINS / 180;
+      if (h >= H_BINS)
+        h = H_BINS - 1;
+
+      int s = pixel[1] * S_BINS / 256;
+      if (s >= S_BINS)
+        s = S_BINS - 1;
+
+      int v = pixel[2] * V_BINS / 256;
+      if (v >= V_BINS)
+        v = V_BINS - 1;
+
+      hist.at<float>(h, s, v)++;
     }
   }
 
-  // Vertical pass: [1 0 -1]
-  for (int i = 1; i < temp.rows - 1; i++) {
-    cv::Vec3s *dstRow = dst.ptr<cv::Vec3s>(i);
-
-    for (int j = 0; j < temp.cols; j++) {
-      for (int c = 0; c < 3; c++) {
-        int sum = 0;
-        for (int k = -1; k <= 1; k++) {
-          sum += temp.ptr<cv::Vec3s>(i + k)[j][c] * vertical[k + 1];
-        }
-        dstRow[j][c] = sum / 4; // Normalize by sum of horizontal filter
+  float total = (float)hsv.rows * hsv.cols;
+  std::vector<float> out;
+  for (int h = 0; h < H_BINS; h++) {
+    for (int s = 0; s < S_BINS; s++) {
+      for (int v = 0; v < V_BINS; v++) {
+        out.push_back(hist.at<float>(h, s, v) / total);
       }
     }
   }
+  return out;
+}
 
+/**
+ * Task 7: extractTask7Features
+ * HSV Spatial histograms: Top, Bottom, and 100x100 Mid (1536 bins total).
+ */
+int extractTask7Features(cv::Mat &src, std::vector<float> &featureVector) {
+  featureVector.clear();
+  // Top
+  cv::Rect topRect(0, 0, src.cols, src.rows / 2);
+  cv::Mat topRegion = src(topRect);
+  std::vector<float> topHist = getRegionHistHSV(topRegion);
+  // Bottom
+  cv::Rect botRect(0, src.rows / 2, src.cols, src.rows / 2);
+  cv::Mat botRegion = src(botRect);
+  std::vector<float> botHist = getRegionHistHSV(botRegion);
+  // Mid 100x100
+  int sX = std::max(0, (src.cols / 2) - 50);
+  int sY = std::max(0, (src.rows / 2) - 50);
+  cv::Rect midRect(sX, sY, std::min(100, src.cols), std::min(100, src.rows));
+  cv::Mat midRegion = src(midRect);
+  std::vector<float> midHist = getRegionHistHSV(midRegion);
+
+  featureVector.insert(featureVector.end(), topHist.begin(), topHist.end());
+  featureVector.insert(featureVector.end(), botHist.begin(), botHist.end());
+  featureVector.insert(featureVector.end(), midHist.begin(), midHist.end());
   return 0;
 }
-//----------------Task 8------------------
+
+// =============================================================================
+// EXTENSION 1: GABOR TEXTURE FEATURES
+// =============================================================================
+
 /**
- * Calculate gradient magnitude from Sobel X and Y.
- * Magnitude = sqrt(sx*sx + sy*sy)
+ * extractGaborFeatures
+ * Generates a bank of Gabor filters (4 orientations * 2 scales).
+ * Computes Mean and StdDev of the response for each filter.
+ * Vector Size: 16 floats.
  */
-/**
- * @brief Calculates the gradient magnitude from horizontal and vertical Sobel
- * images.
- *
- * Computes Euclidean distance: magnitude = sqrt(sx^2 + sy^2).
- *
- * @param sx [cv::Mat&] The Sobel X gradient image (16-bit signed).
- * @param sy [cv::Mat&] The Sobel Y gradient image (16-bit signed).
- * @param dst [cv::Mat&] The output magnitude image (8-bit unsigned).
- * @return int Returns 0 on success, -1 on empty input.
- */
-int magnitude(cv::Mat &sx, cv::Mat &sy, cv::Mat &dst) {
-  if (sx.empty() || sy.empty()) {
-    printf("Error: Input images are empty\n");
-    return -1;
+int extractGaborFeatures(cv::Mat &src, std::vector<float> &featureVector) {
+  featureVector.clear();
+
+  cv::Mat gray;
+  if (src.channels() == 3) {
+    cv::cvtColor(src, gray, cv::COLOR_BGR2GRAY);
+  } else {
+    gray = src.clone(); // Already gray
   }
 
-  // Create destination as 8-bit unsigned char
-  dst.create(sx.size(), CV_8UC3);
+  // Gabor Parameters
+  int ksize = 31;      // Kernel size
+  double lambd = 10.0; // Wavelength
+  double gamma = 0.5;  // Aspect ratio
+  double psi = 0;      // Phase offset
 
-  for (int i = 0; i < sx.rows; i++) {
-    cv::Vec3s *sxRow = sx.ptr<cv::Vec3s>(i);
-    cv::Vec3s *syRow = sy.ptr<cv::Vec3s>(i);
-    cv::Vec3b *dstRow = dst.ptr<cv::Vec3b>(i);
+  // 2 Scales (Sigmas)
+  std::vector<double> sigmas = {2.0, 4.0};
 
-    for (int j = 0; j < sx.cols; j++) {
-      for (int c = 0; c < 3; c++) {
-        float mag = sqrt(sxRow[j][c] * sxRow[j][c] + syRow[j][c] * syRow[j][c]);
-        // Clamp to 0-255 range
-        dstRow[j][c] = cv::saturate_cast<uchar>(mag);
-      }
+  // 4 Orientations (Thetas in Radians)
+  // 0, 45, 90, 135 degrees
+  std::vector<double> thetas = {0, CV_PI / 4, CV_PI / 2, 3 * CV_PI / 4};
+
+  for (double sigma : sigmas) {
+    for (double theta : thetas) {
+      cv::Mat kernel = cv::getGaborKernel(cv::Size(ksize, ksize), sigma, theta,
+                                          lambd, gamma, psi, CV_32F);
+
+      cv::Mat dest;
+      cv::filter2D(gray, dest, CV_32F, kernel);
+
+      // Compute Mean and StdDev of the response
+      cv::Scalar mean, stddev;
+      cv::meanStdDev(dest, mean, stddev);
+
+      featureVector.push_back((float)mean[0]);
+      featureVector.push_back((float)stddev[0]);
     }
   }
 
